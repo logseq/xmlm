@@ -319,6 +319,7 @@ struct
       mutable peek : signal;                            (* Signal lookahead. *)
       mutable stripping : bool;             (* True if stripping whitespace. *)
       mutable last_white : bool;             (* True if last char was white. *)
+      mutable last_newline: bool;          (* True if last char was newline. *)
       mutable scopes : (name * string list * bool) list;
          (* Stack of qualified el. name, bound prefixes and strip behaviour. *)
       ns : string Ht.t;                           (* prefix -> uri bindings. *)
@@ -361,12 +362,14 @@ struct
     { enc = enc; strip = strip; fun_ns  = ns; fun_entity = entity;
       i = i; uchar = uchar_byte; c = u_start_doc; cr = false;
       line = 1; col = 0; limit = Text; peek = signal_start_stream;
-      stripping = strip; last_white = true; scopes = []; ns = bindings;
-      ident = Buffer.create 64; data = Buffer.create 1024; }
+      stripping = strip; last_white = true; last_newline=false; scopes = [];
+      ns = bindings; ident = Buffer.create 64; data = Buffer.create 1024; }
 
   (* Bracketed non-terminals in comments refer to XML 1.0 non terminals *)
 
   let r : int -> int -> int -> bool = fun u a b -> a <= u && u <= b
+
+  let is_newline = function 0x000A -> true | _ -> false
   let is_white = function 0x0020 | 0x0009 | 0x000D | 0x000A -> true | _ -> false
 
   let is_char = function                                           (* {Char} *)
@@ -420,10 +423,17 @@ struct
   let addc_data i c = Buffer.add_uchar i.data c
 
   let addc_data_strip i c =
-    if is_white c then i.last_white <- true else
+    if is_newline c then begin
+      i.last_newline <- true;
+      i.last_white <- true;
+    end
+    else if is_white c then i.last_white <- true else
     begin
-      if i.last_white && Buffer.length i.data <> 0 then addc_data i u_space;
+      if i.last_white && i.last_newline && Buffer.length i.data <> 0 then
+        addc_data i u_nl
+      else if i.last_white && Buffer.length i.data <> 0 then addc_data i u_space;
       i.last_white <- false;
+      i.last_newline <- false;
       addc_data i c
     end
 
@@ -1022,7 +1032,8 @@ struct
       | '&' -> escape "&amp;"
    (* | '\'' -> escape "&apos;" *) (* Not needed we use \x22 for attributes. *)
       | '\x22' -> escape "&quot;"
-      | '\n' | '\t' | '\r' -> incr last
+      | '\n' ->  escape "&#10;"
+      | '\t' | '\r' -> incr last
       | c when c < ' ' -> escape "\xEF\xBF\xBD" (* illegal, subst. by U+FFFD *)
       | _ -> incr last
       done;
